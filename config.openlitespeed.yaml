@@ -1,0 +1,30 @@
+#ddev-generated
+# Turn the web container into an OpenLiteSpeed server.
+# DDEV stops managing nginx/apache-fpm; two supervised daemons are started:
+#   1. lsphp   - LiteSpeed SAPI PHP, listening on 127.0.0.1:9000
+#   2. openlitespeed - the web server, which connects to that lsphp
+# OLS is reached through ddev-router via web_extra_exposed_ports.
+webserver_type: generic
+
+web_extra_daemons:
+  # LiteSpeed SAPI PHP as its own daemon. OLS connects to it rather than
+  # forking it (this apt build of OLS has no working suEXEC/cgid helper).
+  - name: "lsphp"
+    command: "env PHP_LSAPI_CHILDREN=10 /usr/local/lsws/fcgi-bin/lsphp -b 127.0.0.1:9000"
+    directory: /var/www/html
+  - name: "openlitespeed"
+    command: "/usr/local/bin/ddev-openlitespeed-start"
+    directory: /var/www/html
+
+# container_port 80 is served by OLS; the router terminates public TLS and
+# forwards plain HTTP to it, so http_port/https_port both map to container 80.
+# 7080 is the OLS WebAdmin console (all three fields are required by ddev-router).
+web_extra_exposed_ports:
+  - name: "openlitespeed"
+    container_port: 80
+    http_port: 80
+    https_port: 443
+  - name: "openlitespeed-admin"
+    container_port: 7080
+    http_port: 7081
+    https_port: 7080

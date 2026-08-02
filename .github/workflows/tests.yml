@@ -1,0 +1,29 @@
+name: tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: '01 06 * * 0'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tests:
+    name: "PHP ${{ matrix.php_version }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php_version: ["8.3", "8.4"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        uses: ddev/github-action-add-on-test@v2
+        with:
+          php_version: ${{ matrix.php_version }}
+          test_command: bats ./tests/test.bats --filter-tags '!release'

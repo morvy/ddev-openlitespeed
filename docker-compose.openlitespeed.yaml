@@ -1,0 +1,8 @@
+#ddev-generated
+# Publish OLS's ports directly on the host too, so the project is also reachable
+# at https://127.0.0.1:$DDEV_HOST_HTTPS_PORT in addition to the router URL.
+services:
+  web:
+    ports:
+      - "$DDEV_HOST_HTTP_PORT:80"
+      - "$DDEV_HOST_HTTPS_PORT:443"

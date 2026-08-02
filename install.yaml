@@ -1,0 +1,29 @@
+name: openlitespeed
+
+# Generic web server: DDEV does not start nginx/apache-fpm; OpenLiteSpeed
+# (installed into the web container) serves the project instead.
+# Requires the `generic` webserver_type mechanism (DDEV v1.24.3+).
+ddev_version_constraint: '>= v1.24.3'
+
+pre_install_actions:
+  - |
+    #ddev-description:Check PHP version is supported by lsphp
+    if ! echo "${DDEV_PHP_VERSION}" | grep -qE '^(7\.4|8\.[0-4])$'; then
+      echo "ddev-openlitespeed supports PHP 7.4 and 8.0–8.4 (the versions lsphp packages exist for)."
+      echo "This project is on PHP ${DDEV_PHP_VERSION}."
+      echo "Switch with e.g.:  ddev config --php-version=8.3"
+      exit 2
+    fi
+
+project_files:
+  - config.openlitespeed.yaml
+  - docker-compose.openlitespeed.yaml
+  - web-build/Dockerfile.openlitespeed
+  - web-build/openlitespeed/httpd_config.conf
+  - web-build/openlitespeed/vhost.conf
+  - web-build/openlitespeed/ddev-openlitespeed-start
+
+# Files listed in project_files that carry #ddev-generated are removed
+# automatically on `ddev add-on remove openlitespeed`. Removing
+# config.openlitespeed.yaml reverts webserver_type to the project default.
+removal_actions: []

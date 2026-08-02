@@ -1,0 +1,71 @@
+#ddev-generated
+# Install OpenLiteSpeed + a matching lsphp into the DDEV web container.
+# DDEV injects DDEV_PHP_VERSION as a build arg; the lsphp package version is
+# derived from it (8.4 -> 84), so `ddev config --php-version=...` + rebuild is
+# all that is needed to switch PHP versions — nothing is hardcoded.
+
+RUN <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+LSPHPVER="${DDEV_PHP_VERSION//./}"   # 8.4 -> 84
+SERVER_ROOT=/usr/local/lsws
+
+# LiteSpeed apt repo + OpenLiteSpeed
+wget -qO- https://repo.litespeed.sh | bash >/dev/null 2>&1
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openlitespeed
+
+# Required lsphp core (must exist for every supported version)
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  "lsphp${LSPHPVER}" \
+  "lsphp${LSPHPVER}-common" \
+  "lsphp${LSPHPVER}-mysql" \
+  "lsphp${LSPHPVER}-curl" \
+  "lsphp${LSPHPVER}-intl" \
+  "lsphp${LSPHPVER}-opcache"
+
+# Optional extensions — best effort; some are missing on older lsphp versions.
+for ext in imagick redis igbinary memcached; do
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "lsphp${LSPHPVER}-${ext}"; then
+    echo "NOTE: lsphp${LSPHPVER}-${ext} not available for PHP ${DDEV_PHP_VERSION}, skipping."
+  fi
+done
+rm -rf /var/lib/apt/lists/*
+
+# Stable, version-independent path used by both the OLS config and the lsphp
+# daemon command. The Dockerfile repoints it per PHP version; nothing else changes.
+mkdir -p "${SERVER_ROOT}/fcgi-bin"
+ln -sf "${SERVER_ROOT}/lsphp${LSPHPVER}/bin/lsphp" "${SERVER_ROOT}/fcgi-bin/lsphp"
+
+# Carry DDEV's base php.ini (memory_limit, upload sizes, etc.) into lsphp.
+# ponytail: does not merge the project's .ddev/php/*.ini overrides into lsphp — v1.
+LSPHP_INI_DIR="${SERVER_ROOT}/lsphp${LSPHPVER}/etc/php/${DDEV_PHP_VERSION}/litespeed"
+if [ -f "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" ]; then
+  mkdir -p "${LSPHP_INI_DIR}"
+  cp "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" "${LSPHP_INI_DIR}/php.ini"
+fi
+
+# Set the WebAdmin console login (dev-only creds: admin / admin).
+ADMIN_PASS_HASH="$("${SERVER_ROOT}/admin/fcgi-bin/admin_php" -q "${SERVER_ROOT}/admin/misc/htpasswd.php" admin)"
+echo "admin:${ADMIN_PASS_HASH}" > "${SERVER_ROOT}/admin/conf/htpasswd"
+
+mkdir -p "${SERVER_ROOT}/conf/vhosts/ddev" "${SERVER_ROOT}/logs" "${SERVER_ROOT}/tmp" "${SERVER_ROOT}/cachedata" "${SERVER_ROOT}/admin/logs"
+EOF
+
+# DDEV-managed OLS configuration.
+COPY --chmod=0644 ./openlitespeed/httpd_config.conf /usr/local/lsws/conf/httpd_config.conf
+# vhost is a template (docroot injected at container start); rendered by the start script.
+COPY --chmod=0644 ./openlitespeed/vhost.conf /usr/local/lsws/conf/vhosts/ddev/vhconf.conf.tmpl
+COPY --chmod=0755 ./openlitespeed/ddev-openlitespeed-start /usr/local/bin/ddev-openlitespeed-start
+
+# The web container runs as an arbitrary non-root, per-project user. Make OLS's
+# runtime dirs writable by any user so it can start, render config, and write
+# logs/cache/sockets. (Done after COPY so it also covers the config files.)
+RUN chmod -R ugo+rwX \
+      /usr/local/lsws/conf \
+      /usr/local/lsws/logs \
+      /usr/local/lsws/tmp \
+      /usr/local/lsws/cachedata \
+      /usr/local/lsws/admin/conf \
+      /usr/local/lsws/admin/logs

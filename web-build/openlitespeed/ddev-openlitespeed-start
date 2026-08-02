@@ -1,0 +1,57 @@
+#!/bin/bash
+#ddev-generated
+# Foreground wrapper for OpenLiteSpeed under DDEV `web_extra_daemons`.
+#
+# OLS daemonizes itself, but supervisord expects a foreground process. So we:
+#   1. render the vhost config with the project's real docroot
+#   2. pin OLS's server user/group to the container's runtime (code-owning) user
+#   3. start OLS (which detaches) and stream its logs so `ddev logs -f` shows them
+#   4. block until OLS exits, then return so supervisord restarts us
+#
+# PHP is served by a separate `lsphp` daemon on 127.0.0.1:9000 (see
+# config.openlitespeed.yaml); OLS connects to it, it does not fork it.
+set -u
+
+SERVER_ROOT=/usr/local/lsws
+RUN_USER="$(id -un)"
+RUN_GROUP="$(id -gn)"
+
+# Resolve the docroot: DDEV mounts the project at /var/www/html; DDEV_DOCROOT is
+# the (possibly empty) subdirectory configured with `ddev config --docroot`.
+DOCROOT="/var/www/html"
+[ -n "${DDEV_DOCROOT:-}" ] && DOCROOT="/var/www/html/${DDEV_DOCROOT}"
+
+# Render vhconf.conf from the template every start, so docroot changes apply
+# without an image rebuild.
+sed "s|##DDEV_DOCROOT##|${DOCROOT}|g" \
+  "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf.tmpl" \
+  > "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf"
+
+# Run OLS as the current (project-code-owning) user so served/created files have
+# the right ownership on the host mount.
+sed -i -E "s|^user .*|user                      ${RUN_USER}|; s|^group .*|group                     ${RUN_GROUP}|" \
+  "${SERVER_ROOT}/conf/httpd_config.conf"
+
+mkdir -p /tmp/lshttpd "${SERVER_ROOT}/logs"
+: > "${SERVER_ROOT}/logs/error.log"  2>/dev/null || true
+: > "${SERVER_ROOT}/logs/access.log" 2>/dev/null || true
+
+"${SERVER_ROOT}/bin/lswsctrl" start
+
+# Stream logs to this process's stdout so they reach `ddev logs`.
+tail -n0 -F "${SERVER_ROOT}/logs/error.log" "${SERVER_ROOT}/logs/access.log" &
+TAIL_PID=$!
+
+graceful_stop() {
+  "${SERVER_ROOT}/bin/lswsctrl" stop >/dev/null 2>&1 || true
+  kill "${TAIL_PID}" 2>/dev/null || true
+  exit 0
+}
+trap graceful_stop TERM INT
+
+# Block until OLS stops running, then let supervisord restart the daemon.
+while "${SERVER_ROOT}/bin/lswsctrl" status 2>/dev/null | grep -q 'is running'; do
+  sleep 2
+done
+
+kill "${TAIL_PID}" 2>/dev/null || true

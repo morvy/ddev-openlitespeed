@@ -1,0 +1,13 @@
+# Agent / tooling operational state (not part of the add-on)
+/.omc/
+/.serena/
+/.claude/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+*.log
