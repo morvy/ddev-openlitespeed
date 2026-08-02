@@ -1,10 +1,11 @@
 #!/usr/bin/env bats
 
 # Bats testing framework: https://bats-core.readthedocs.io/en/stable/
-# Local run (from the add-on root, with bats-core/-assert/-file/-support installed):
-#   bats ./tests/test.bats
-# Exclude the release test:
-#   bats ./tests/test.bats --filter-tags '!release'
+# Local run (needs bats-core, bats-assert, bats-file, bats-support):
+#   bats ./tests/test.bats --filter-tags php84
+#   bats ./tests/test.bats --filter-tags '!release'   # everything but the release test
+# Debugging:
+#   bats ./tests/test.bats --show-output-of-passing-tests --verbose-run --print-output-on-failure
 
 setup() {
   set -eu -o pipefail
@@ -18,36 +19,48 @@ setup() {
   bats_load_library bats-support
 
   export DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." >/dev/null 2>&1 && pwd)"
-  export PROJNAME="test-ddev-openlitespeed"
-  mkdir -p "${HOME}/tmp"
-  export TESTDIR="$(mktemp -d "${HOME}/tmp/${PROJNAME}.XXXXXX")"
+  export PROJNAME="test-$(basename "${GITHUB_REPO}")"
+  mkdir -p ~/tmp
+  export TESTDIR="$(mktemp -d ~/tmp/${PROJNAME}.XXXXXX)"
   export DDEV_NONINTERACTIVE=true
   export DDEV_NO_INSTRUMENTATION=true
   ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
   cd "${TESTDIR}"
-
-  # Minimal PHP app served from the project root (empty docroot).
-  cat > index.php <<'PHP'
-<?php echo "ddev-openlitespeed-ok software=" . ($_SERVER['SERVER_SOFTWARE'] ?? 'unknown');
-PHP
-
   run ddev config --project-name="${PROJNAME}" --project-tld=ddev.site
-  assert_success
-  run ddev start -y
   assert_success
 }
 
+# Minimal app that reports the HTTPS-related server vars PHP sees.
+install_index() {
+  cat > index.php <<'PHP'
+<?php
+foreach (['HTTPS', 'SERVER_PORT', 'REQUEST_SCHEME', 'SERVER_SOFTWARE'] as $k) {
+  echo "$k=" . ($_SERVER[$k] ?? '(unset)') . "\n";
+}
+echo "ddev-openlitespeed-ok\n";
+PHP
+  assert_file_exist index.php
+}
+
 health_checks() {
-  # The project must be reachable through ddev-router with a 200.
+  # PHP served by OpenLiteSpeed via lsphp, over HTTPS through ddev-router.
   run curl -sfI "https://${PROJNAME}.ddev.site"
   assert_success
-  assert_output --partial "200"
+  assert_output --partial "HTTP/2 200"
+  assert_output --regexp "[Ss]erver: LiteSpeed"
 
-  # PHP must actually execute via lsphp, and the server must be OpenLiteSpeed.
   run curl -sf "https://${PROJNAME}.ddev.site/"
   assert_success
   assert_output --partial "ddev-openlitespeed-ok"
-  assert_output --partial "LiteSpeed"
+  assert_output --partial "SERVER_SOFTWARE=LiteSpeed"
+  # HTTPS server vars must be correct behind the TLS-terminating router.
+  assert_output --partial "HTTPS=on"
+  assert_output --partial "SERVER_PORT=443"
+
+  # Plain HTTP must NOT report HTTPS=on.
+  run curl -sf "http://${PROJNAME}.ddev.site/"
+  assert_success
+  refute_output --partial "HTTPS=on"
 }
 
 teardown() {
@@ -60,8 +73,26 @@ teardown() {
   fi
 }
 
-@test "install from directory" {
+# bats test_tags=php83
+@test "PHP 8.3 (install from directory)" {
   set -eu -o pipefail
+  run ddev config --php-version=8.3
+  assert_success
+  install_index
+  echo "# ddev add-on get ${DIR} with project ${PROJNAME} in $(pwd)" >&3
+  run ddev add-on get "${DIR}"
+  assert_success
+  run ddev restart -y
+  assert_success
+  health_checks
+}
+
+# bats test_tags=php84
+@test "PHP 8.4 (install from directory)" {
+  set -eu -o pipefail
+  run ddev config --php-version=8.4
+  assert_success
+  install_index
   echo "# ddev add-on get ${DIR} with project ${PROJNAME} in $(pwd)" >&3
   run ddev add-on get "${DIR}"
   assert_success
@@ -73,6 +104,7 @@ teardown() {
 # bats test_tags=release
 @test "install from release" {
   set -eu -o pipefail
+  install_index
   echo "# ddev add-on get ${GITHUB_REPO} with project ${PROJNAME} in $(pwd)" >&3
   run ddev add-on get "${GITHUB_REPO}"
   assert_success

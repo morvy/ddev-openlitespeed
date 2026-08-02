@@ -1,29 +1,43 @@
 name: tests
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+    paths-ignore: [ "**.md" ]
   pull_request:
+    paths-ignore: [ "**.md" ]
   schedule:
-    - cron: '01 06 * * 0'
+    - cron: '25 08 * * *'
   workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: 'Run with tmate debugging enabled'
+        required: false
+        default: false
 
-defaults:
-  run:
-    shell: bash
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   tests:
-    name: "PHP ${{ matrix.php_version }}"
-    runs-on: ubuntu-24.04
+    name: "${{ matrix.bats_tag }} (ddev ${{ matrix.ddev_version }})"
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        php_version: ["8.3", "8.4"]
+        ddev_version: [stable]
+        bats_tag: [php83, php84]
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run tests
+      - name: ${{ matrix.bats_tag }}
         uses: ddev/github-action-add-on-test@v2
         with:
-          php_version: ${{ matrix.php_version }}
-          test_command: bats ./tests/test.bats --filter-tags '!release'
+          ddev_version: ${{ matrix.ddev_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          debug_enabled: ${{ github.event.inputs.debug_enabled }}
+          addon_repository: ${{ github.repository }}
+          addon_ref: ${{ github.ref }}
+          test_command: bats ./tests/test.bats --filter-tags ${{ matrix.bats_tag }}
