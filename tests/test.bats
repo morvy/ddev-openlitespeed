@@ -37,11 +37,13 @@ install_index() {
 foreach (['HTTPS', 'SERVER_PORT', 'REQUEST_SCHEME', 'SERVER_SOFTWARE'] as $k) {
   echo "$k=" . ($_SERVER[$k] ?? '(unset)') . "\n";
 }
+echo "phpver=" . PHP_VERSION . "\n";
 echo "ddev-openlitespeed-ok\n";
 PHP
   assert_file_exist index.php
 }
 
+# $1 = expected PHP version prefix (e.g. "7.4")
 health_checks() {
   # PHP served by OpenLiteSpeed via lsphp, over HTTPS through ddev-router.
   run curl -sfI "https://${PROJNAME}.ddev.site"
@@ -53,6 +55,7 @@ health_checks() {
   assert_success
   assert_output --partial "ddev-openlitespeed-ok"
   assert_output --partial "SERVER_SOFTWARE=LiteSpeed"
+  assert_output --partial "phpver=${1}"
   # HTTPS server vars must be correct behind the TLS-terminating router.
   assert_output --partial "HTTPS=on"
   assert_output --partial "SERVER_PORT=443"
@@ -73,32 +76,34 @@ teardown() {
   fi
 }
 
-# bats test_tags=php83
-@test "PHP 8.3 (install from directory)" {
-  set -eu -o pipefail
-  run ddev config --php-version=8.3
+install_and_check() {  # $1 = php version
+  run ddev config --php-version="${1}"
   assert_success
   install_index
-  echo "# ddev add-on get ${DIR} with project ${PROJNAME} in $(pwd)" >&3
+  echo "# ddev add-on get ${DIR} with project ${PROJNAME} (PHP ${1}) in $(pwd)" >&3
   run ddev add-on get "${DIR}"
   assert_success
   run ddev restart -y
   assert_success
-  health_checks
+  health_checks "${1}"
+}
+
+# bats test_tags=php74
+@test "PHP 7.4 (bookworm lsphp sidecar)" {
+  set -eu -o pipefail
+  install_and_check "7.4"
+}
+
+# bats test_tags=php83
+@test "PHP 8.3 (native lsphp)" {
+  set -eu -o pipefail
+  install_and_check "8.3"
 }
 
 # bats test_tags=php84
-@test "PHP 8.4 (install from directory)" {
+@test "PHP 8.4 (native lsphp)" {
   set -eu -o pipefail
-  run ddev config --php-version=8.4
-  assert_success
-  install_index
-  echo "# ddev add-on get ${DIR} with project ${PROJNAME} in $(pwd)" >&3
-  run ddev add-on get "${DIR}"
-  assert_success
-  run ddev restart -y
-  assert_success
-  health_checks
+  install_and_check "8.4"
 }
 
 # bats test_tags=release
@@ -110,5 +115,5 @@ teardown() {
   assert_success
   run ddev restart -y
   assert_success
-  health_checks
+  health_checks "8"
 }

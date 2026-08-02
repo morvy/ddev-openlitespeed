@@ -1,0 +1,12 @@
+#!/bin/bash
+#ddev-generated
+# In-web lsphp daemon (native mode: PHP 8.1-8.5). In sidecar mode (PHP 7.4/8.0)
+# lsphp runs in a separate container, so idle here to keep supervisord happy.
+# Mode is decided at build time (see Dockerfile.openlitespeed); don't test for
+# fcgi-bin/lsphp — the openlitespeed package ships a bundled lsphp 5.6 there.
+MODE="$(cat /usr/local/lsws/DDEV_LSPHP_MODE 2>/dev/null || echo native)"
+if [ "${MODE}" = "native" ] && [ -x /usr/local/lsws/fcgi-bin/lsphp ]; then
+  exec env PHP_LSAPI_CHILDREN="${OLS_LSAPI_CHILDREN:-10}" /usr/local/lsws/fcgi-bin/lsphp -b 127.0.0.1:9000
+else
+  exec tail -f /dev/null
+fi

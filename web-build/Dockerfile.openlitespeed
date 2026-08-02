@@ -1,8 +1,12 @@
 #ddev-generated
-# Install OpenLiteSpeed + a matching lsphp into the DDEV web container.
-# DDEV injects DDEV_PHP_VERSION as a build arg; the lsphp package version is
-# derived from it (8.4 -> 84), so `ddev config --php-version=...` + rebuild is
-# all that is needed to switch PHP versions — nothing is hardcoded.
+# Install OpenLiteSpeed into the DDEV web container. lsphp is installed here too
+# for versions Debian trixie still ships (8.1-8.5, "native" mode). For versions
+# it dropped (7.4/8.0) lsphp runs in a bookworm sidecar instead, so we skip the
+# local install and OLS connects to the sidecar (see sync-lsphp-mode.sh).
+#
+# The chosen mode is recorded in /usr/local/lsws/DDEV_LSPHP_MODE and read at
+# start time. (Don't infer mode from fcgi-bin/lsphp: the openlitespeed package
+# ships a bundled lsphp 5.6 there, which must not be used.)
 
 RUN <<'EOF'
 #!/usr/bin/env bash
@@ -11,39 +15,45 @@ set -euo pipefail
 LSPHPVER="${DDEV_PHP_VERSION//./}"   # 8.4 -> 84
 SERVER_ROOT=/usr/local/lsws
 
-# LiteSpeed apt repo + OpenLiteSpeed
+# LiteSpeed apt repo + OpenLiteSpeed (always needed).
 wget -qO- https://repo.litespeed.sh | bash >/dev/null 2>&1
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openlitespeed
 
-# Required lsphp core (must exist for every supported version)
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  "lsphp${LSPHPVER}" \
-  "lsphp${LSPHPVER}-common" \
-  "lsphp${LSPHPVER}-mysql" \
-  "lsphp${LSPHPVER}-curl" \
-  "lsphp${LSPHPVER}-intl" \
-  "lsphp${LSPHPVER}-opcache"
+if apt-cache show "lsphp${LSPHPVER}" >/dev/null 2>&1; then
+  # Native mode: lsphp is available for this Debian release.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    "lsphp${LSPHPVER}" \
+    "lsphp${LSPHPVER}-common" \
+    "lsphp${LSPHPVER}-mysql" \
+    "lsphp${LSPHPVER}-curl" \
+    "lsphp${LSPHPVER}-intl" \
+    "lsphp${LSPHPVER}-opcache"
+  for ext in imagick redis igbinary memcached; do
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "lsphp${LSPHPVER}-${ext}"; then
+      echo "NOTE: lsphp${LSPHPVER}-${ext} not available for PHP ${DDEV_PHP_VERSION}, skipping."
+    fi
+  done
 
-# Optional extensions — best effort; some are missing on older lsphp versions.
-for ext in imagick redis igbinary memcached; do
-  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "lsphp${LSPHPVER}-${ext}"; then
-    echo "NOTE: lsphp${LSPHPVER}-${ext} not available for PHP ${DDEV_PHP_VERSION}, skipping."
+  # Point the stable path at OUR lsphp (overwriting the bundled 5.6 lsphp).
+  mkdir -p "${SERVER_ROOT}/fcgi-bin"
+  ln -sf "${SERVER_ROOT}/lsphp${LSPHPVER}/bin/lsphp" "${SERVER_ROOT}/fcgi-bin/lsphp"
+
+  # Carry DDEV's base php.ini (memory_limit, upload sizes, etc.) into lsphp.
+  # ponytail: does not merge the project's .ddev/php/*.ini overrides — v1.
+  LSPHP_INI_DIR="${SERVER_ROOT}/lsphp${LSPHPVER}/etc/php/${DDEV_PHP_VERSION}/litespeed"
+  if [ -f "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" ]; then
+    mkdir -p "${LSPHP_INI_DIR}"
+    cp "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" "${LSPHP_INI_DIR}/php.ini"
   fi
-done
-rm -rf /var/lib/apt/lists/*
 
-# Stable, version-independent path used by both the OLS config and the lsphp
-# daemon command. The Dockerfile repoints it per PHP version; nothing else changes.
-mkdir -p "${SERVER_ROOT}/fcgi-bin"
-ln -sf "${SERVER_ROOT}/lsphp${LSPHPVER}/bin/lsphp" "${SERVER_ROOT}/fcgi-bin/lsphp"
-
-# Carry DDEV's base php.ini (memory_limit, upload sizes, etc.) into lsphp.
-# ponytail: does not merge the project's .ddev/php/*.ini overrides into lsphp — v1.
-LSPHP_INI_DIR="${SERVER_ROOT}/lsphp${LSPHPVER}/etc/php/${DDEV_PHP_VERSION}/litespeed"
-if [ -f "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" ]; then
-  mkdir -p "${LSPHP_INI_DIR}"
-  cp "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" "${LSPHP_INI_DIR}/php.ini"
+  echo native > "${SERVER_ROOT}/DDEV_LSPHP_MODE"
+else
+  # Sidecar mode: OLS connects to the bookworm lsphp sidecar. Remove the bundled
+  # lsphp 5.6 so nothing here can be used by mistake.
+  echo "NOTE: no lsphp for PHP ${DDEV_PHP_VERSION} in the web image; using the lsphp sidecar."
+  rm -f "${SERVER_ROOT}/fcgi-bin/lsphp"
+  echo sidecar > "${SERVER_ROOT}/DDEV_LSPHP_MODE"
 fi
 
 # Set the WebAdmin console login (dev-only creds: admin / admin).
@@ -58,6 +68,7 @@ COPY --chmod=0644 ./openlitespeed/httpd_config.conf /usr/local/lsws/conf/httpd_c
 # vhost is a template (docroot injected at container start); rendered by the start script.
 COPY --chmod=0644 ./openlitespeed/vhost.conf /usr/local/lsws/conf/vhosts/ddev/vhconf.conf.tmpl
 COPY --chmod=0755 ./openlitespeed/ddev-openlitespeed-start /usr/local/bin/ddev-openlitespeed-start
+COPY --chmod=0755 ./openlitespeed/ddev-openlitespeed-lsphp /usr/local/bin/ddev-openlitespeed-lsphp
 
 # The web container runs as an arbitrary non-root, per-project user. Make OLS's
 # runtime dirs writable by any user so it can start, render config, and write

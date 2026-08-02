@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         ddev_version: [stable]
-        bats_tag: [php83, php84]
+        bats_tag: [php74, php83, php84]
     steps:
       - name: ${{ matrix.bats_tag }}
         uses: ddev/github-action-add-on-test@v2

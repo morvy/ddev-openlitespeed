@@ -4,32 +4,40 @@
 #
 # OLS daemonizes itself, but supervisord expects a foreground process. So we:
 #   1. render the vhost config with the project's real docroot
-#   2. pin OLS's server user/group to the container's runtime (code-owning) user
-#   3. start OLS (which detaches) and stream its logs so `ddev logs -f` shows them
-#   4. block until OLS exits, then return so supervisord restarts us
-#
-# PHP is served by a separate `lsphp` daemon on 127.0.0.1:9000 (see
-# config.openlitespeed.yaml); OLS connects to it, it does not fork it.
+#   2. point OLS at the active lsphp (local in this container, or the sidecar)
+#   3. pin OLS's server user/group to the container's runtime (code-owning) user
+#   4. start OLS (which detaches) and stream its logs so `ddev logs -f` shows them
+#   5. block until OLS exits, then return so supervisord restarts us
 set -u
 
 SERVER_ROOT=/usr/local/lsws
 RUN_USER="$(id -un)"
 RUN_GROUP="$(id -gn)"
 
+# lsphp location, from the mode chosen at build time. native (PHP 8.1-8.5) =>
+# lsphp in this container; sidecar (PHP 7.4/8.0) => the bookworm sidecar.
+MODE="$(cat "${SERVER_ROOT}/DDEV_LSPHP_MODE" 2>/dev/null || echo native)"
+if [ "${MODE}" = "sidecar" ]; then
+  LSPHP_ADDRESS="openlitespeed-lsphp:9000"
+else
+  LSPHP_ADDRESS="127.0.0.1:9000"
+fi
+
 # Resolve the docroot: DDEV mounts the project at /var/www/html; DDEV_DOCROOT is
 # the (possibly empty) subdirectory configured with `ddev config --docroot`.
 DOCROOT="/var/www/html"
 [ -n "${DDEV_DOCROOT:-}" ] && DOCROOT="/var/www/html/${DDEV_DOCROOT}"
 
-# Render vhconf.conf from the template every start, so docroot changes apply
-# without an image rebuild.
+# Render vhconf.conf from the template every start (docroot changes need no rebuild).
 sed "s|##DDEV_DOCROOT##|${DOCROOT}|g" \
   "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf.tmpl" \
   > "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf"
 
-# Run OLS as the current (project-code-owning) user so served/created files have
-# the right ownership on the host mount.
-sed -i -E "s|^user .*|user                      ${RUN_USER}|; s|^group .*|group                     ${RUN_GROUP}|" \
+# Set the lsphp address and pin OLS to the current (code-owning) user.
+sed -i \
+  -e "s|##LSPHP_ADDRESS##|${LSPHP_ADDRESS}|g" \
+  -e "s|^user .*|user                      ${RUN_USER}|" \
+  -e "s|^group .*|group                     ${RUN_GROUP}|" \
   "${SERVER_ROOT}/conf/httpd_config.conf"
 
 mkdir -p /tmp/lshttpd "${SERVER_ROOT}/logs"
