@@ -1,5 +1,5 @@
 name: release
-# Push a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) to run the
+# Push a version tag (e.g. `git tag v1.0.2 && git push origin v1.0.2`) to run the
 # full test suite against that tag and, only if every test passes, publish a
 # GitHub release for it — which is what `ddev add-on get morvy/ddev-openlitespeed`
 # installs.

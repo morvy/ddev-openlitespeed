@@ -88,8 +88,8 @@ Push a version tag; the `release` workflow runs the full PHP matrix against it a
 publishes a GitHub release only if every job passes:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 ## License
