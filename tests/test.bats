@@ -30,13 +30,16 @@ setup() {
   assert_success
 }
 
-# Minimal app that reports the HTTPS-related server vars PHP sees.
+# Minimal app: reports the HTTPS server vars and confirms the DDEV environment
+# reaches PHP (IS_DDEV_PROJECT is what framework settings files gate on — it must
+# be present even when PHP runs in the sidecar).
 install_index() {
   cat > index.php <<'PHP'
 <?php
 foreach (['HTTPS', 'SERVER_PORT', 'REQUEST_SCHEME', 'SERVER_SOFTWARE'] as $k) {
   echo "$k=" . ($_SERVER[$k] ?? '(unset)') . "\n";
 }
+echo "IS_DDEV=" . (getenv('IS_DDEV_PROJECT') ?: 'unset') . "\n";
 echo "phpver=" . PHP_VERSION . "\n";
 echo "ddev-openlitespeed-ok\n";
 PHP
@@ -59,6 +62,8 @@ health_checks() {
   # HTTPS server vars must be correct behind the TLS-terminating router.
   assert_output --partial "HTTPS=on"
   assert_output --partial "SERVER_PORT=443"
+  # DDEV environment must reach PHP (incl. the sidecar) or framework DB config fails.
+  assert_output --partial "IS_DDEV=true"
 
   # Plain HTTP must NOT report HTTPS=on.
   run curl -sf "http://${PROJNAME}.ddev.site/"

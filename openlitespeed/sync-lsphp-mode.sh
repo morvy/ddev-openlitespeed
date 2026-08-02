@@ -30,6 +30,12 @@ if [ "${MODE}" = "sidecar" ]; then
   # Generated, not committed. DDEV substitutes the ${...} vars when it merges
   # docker-compose.*.yaml. (No #ddev-generated marker: DDEV warns about that in
   # docker-compose.*.yaml files it did not itself generate.)
+  #
+  # The environment block gives the sidecar the DDEV vars PHP frameworks read
+  # from their DDEV settings file (e.g. WordPress wp-config-ddev.php / Drupal
+  # settings.ddev.php gate on IS_DDEV_PROJECT and read DDEV_* / DB_*). Without
+  # it those files early-return and the app has no DB credentials. DDEV_APPROOT
+  # is hardcoded to the in-container path (not the host ${DDEV_APPROOT}).
   cat > "${COMPOSE}" <<CMP
 ${MARKER}
 services:
@@ -49,6 +55,22 @@ services:
       - "9000"
     volumes:
       - "\${DDEV_APPROOT}:/var/www/html"
+    environment:
+      - IS_DDEV_PROJECT=true
+      - DDEV_APPROOT=/var/www/html
+      - DDEV_COMPOSER_ROOT=/var/www/html
+      - DDEV_DOCROOT=\${DDEV_DOCROOT}
+      - DDEV_PRIMARY_URL=\${DDEV_PRIMARY_URL}
+      - DDEV_HOSTNAME=\${DDEV_HOSTNAME}
+      - DDEV_PROJECT=\${DDEV_PROJECT}
+      - DDEV_SITENAME=\${DDEV_SITENAME}
+      - DDEV_TLD=\${DDEV_TLD}
+      - DDEV_PHP_VERSION=\${DDEV_PHP_VERSION}
+      - DDEV_DATABASE=\${DDEV_DATABASE}
+      - DB_HOST=db
+      - DB_NAME=db
+      - DB_USER=db
+      - DB_PASSWORD=db
 CMP
 else
   # native: remove any stale generated sidecar compose from a previous 7.4/8.0 run
