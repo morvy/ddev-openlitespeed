@@ -31,19 +31,11 @@ ddev restart
 
 ## PHP versions
 
-LiteSpeed only packages lsphp for the PHP versions supported on the web container's
-Debian release, so the add-on picks how to run lsphp automatically:
+Available: **7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5**. Set one with
+`ddev config --php-version=<version> && ddev restart`.
 
-| PHP version | How lsphp runs |
-|-------------|----------------|
-| **8.1 – 8.5** | **native** — installed in the web container (Debian trixie) |
-| **7.4, 8.0** | **sidecar** — a Debian-bookworm container running lsphp; OLS connects to it over the DDEV network |
-| 5.6, 7.0 – 7.3 | not supported (no lsphp package exists); `ddev start` fails with a clear message |
-
-Switching is automatic: `ddev config --php-version=7.4 && ddev restart` spins up the
-sidecar; switching back to 8.x removes it. Only the EOL versions (7.4/8.0) use the
-code-mount sidecar, so **modern PHP stays native with no macOS/Windows bind-mount
-slowdown**.
+8.1–8.5 run lsphp natively in the web container; 7.4 and 8.0 run it in a
+Debian-bookworm sidecar container. PHP 5.6 and 7.0–7.3 are not available.
 
 ## How it works
 
