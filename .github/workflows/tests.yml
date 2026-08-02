@@ -14,6 +14,8 @@ on:
         description: 'Run with tmate debugging enabled'
         required: false
         default: false
+  # Allow other workflows (e.g. release) to run this suite as a gate.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

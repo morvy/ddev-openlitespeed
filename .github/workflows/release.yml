@@ -1,0 +1,27 @@
+name: release
+# Push a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) to run the
+# full test suite against that tag and, only if every test passes, publish a
+# GitHub release for it — which is what `ddev add-on get morvy/ddev-openlitespeed`
+# installs.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # Reuse tests.yml (matrix across PHP versions) as the gate.
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release for ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes --verify-tag

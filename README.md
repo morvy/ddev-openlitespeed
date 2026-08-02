@@ -75,6 +75,19 @@ ddev restart
 This removes the `#ddev-generated` files and reverts `webserver_type` to your
 project's previous value.
 
+## Releasing
+
+Releases are gated on the test suite. Push a version tag and the `release`
+workflow runs the full PHP matrix against that tag, then publishes a GitHub
+release only if every job passes:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+`ddev add-on get morvy/ddev-openlitespeed` installs the latest published release.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
