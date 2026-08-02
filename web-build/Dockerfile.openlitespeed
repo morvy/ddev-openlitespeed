@@ -56,11 +56,7 @@ else
   echo sidecar > "${SERVER_ROOT}/DDEV_LSPHP_MODE"
 fi
 
-# Set the WebAdmin console login (dev-only creds: admin / admin).
-ADMIN_PASS_HASH="$("${SERVER_ROOT}/admin/fcgi-bin/admin_php" -q "${SERVER_ROOT}/admin/misc/htpasswd.php" admin)"
-echo "admin:${ADMIN_PASS_HASH}" > "${SERVER_ROOT}/admin/conf/htpasswd"
-
-mkdir -p "${SERVER_ROOT}/conf/vhosts/ddev" "${SERVER_ROOT}/logs" "${SERVER_ROOT}/tmp" "${SERVER_ROOT}/cachedata" "${SERVER_ROOT}/admin/logs"
+mkdir -p "${SERVER_ROOT}/conf/vhosts/ddev" "${SERVER_ROOT}/logs" "${SERVER_ROOT}/tmp" "${SERVER_ROOT}/cachedata"
 EOF
 
 # DDEV-managed OLS configuration.
@@ -77,6 +73,4 @@ RUN chmod -R ugo+rwX \
       /usr/local/lsws/conf \
       /usr/local/lsws/logs \
       /usr/local/lsws/tmp \
-      /usr/local/lsws/cachedata \
-      /usr/local/lsws/admin/conf \
-      /usr/local/lsws/admin/logs
+      /usr/local/lsws/cachedata

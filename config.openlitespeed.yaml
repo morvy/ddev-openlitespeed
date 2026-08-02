@@ -21,13 +21,9 @@ web_extra_daemons:
 
 # container_port 80 is served by OLS; the router terminates public TLS and
 # forwards plain HTTP to it, so http_port/https_port both map to container 80.
-# 7080 is the OLS WebAdmin console (all three fields are required by ddev-router).
+# (No WebAdmin console: OLS can't run its admin PHP in this container — see README.)
 web_extra_exposed_ports:
   - name: "openlitespeed"
     container_port: 80
     http_port: 80
     https_port: 443
-  - name: "openlitespeed-admin"
-    container_port: 7080
-    http_port: 7081
-    https_port: 7080

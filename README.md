@@ -14,10 +14,10 @@ the official [`ddev-frankenphp`](https://github.com/ddev/ddev-frankenphp) add-on
 - **Correct HTTPS for PHP** behind the DDEV router: `$_SERVER['HTTPS']`, `SERVER_PORT`
   and `REQUEST_SCHEME` reflect the real scheme, so `is_ssl()` / `isSecure()`, redirects
   and absolute-URL generation work (no mixed-content or redirect loops).
+- **LSCache** advertised to the [LiteSpeed Cache](https://wordpress.org/plugins/litespeed-cache/)
+  plugin (`X-LSCACHE`), so the plugin detects the server and can drive page caching.
 - PHP version follows DDEV (`ddev config --php-version=… && ddev restart`) with
   automatic switching between native and sidecar lsphp — see below.
-- The OpenLiteSpeed **WebAdmin console** at `https://<project>.ddev.site:7080`
-  (login `admin` / `admin`).
 - Project `.htaccess` is honoured for front-controller rewrites (WordPress, Drupal,
   Laravel, …), like apache-fpm.
 - OLS logs stream to `ddev logs -f`.
@@ -44,11 +44,11 @@ code-owning) user:
 
 | Piece | Role |
 |-------|------|
-| `config.openlitespeed.yaml` | sets `webserver_type: generic`; a `pre-start` hook chooses native/sidecar; runs the **lsphp** and **openlitespeed** daemons; exposes 80/443 (+7080 admin) through `ddev-router` |
+| `config.openlitespeed.yaml` | sets `webserver_type: generic`; a `pre-start` hook chooses native/sidecar; runs the **lsphp** and **openlitespeed** daemons; exposes 80/443 through `ddev-router` |
 | `openlitespeed/sync-lsphp-mode.sh` | pre-start host hook: picks native vs sidecar for the current PHP version and generates the sidecar `docker-compose` file when needed |
 | `openlitespeed/lsphp-sidecar/Dockerfile` | the bookworm lsphp sidecar image (7.4/8.0), built automatically on `ddev start` |
 | `web-build/Dockerfile.openlitespeed` | installs OpenLiteSpeed; installs `lsphp${DDEV_PHP_VERSION//./}` natively when trixie has it, else records "sidecar" mode |
-| `web-build/openlitespeed/httpd_config.conf` | main OLS config: one vhost, lsphp external app (`autoStart 0`), `:80` (router) + `:443` (DDEV master cert) listeners |
+| `web-build/openlitespeed/httpd_config.conf` | main OLS config: one vhost, lsphp external app (`autoStart 0`), LSCache module, `:80` (router) + `:443` (DDEV master cert) listeners |
 | `web-build/openlitespeed/vhost.conf` | vhost template; docroot injected at start; rewrites `X-Forwarded-Proto` into real HTTPS server vars |
 | `web-build/openlitespeed/ddev-openlitespeed-start` | foreground OLS wrapper: renders the vhost, points OLS at the active lsphp, streams logs |
 
@@ -64,13 +64,15 @@ in the sidecar).
 
 ## Known limitations
 
+- **No WebAdmin console.** OpenLiteSpeed's admin console runs its own PHP as an internal
+  worker that needs the same (broken) suEXEC helper, so it can't run in this container.
+  It's disabled; configure OpenLiteSpeed by editing the files under
+  `.ddev/web-build/openlitespeed/` and running `ddev restart`.
 - **`ddev xdebug on` does not drive lsphp yet** (lsphp uses its own ini directory).
 - **`.ddev/php/*.ini` overrides don't reach lsphp** (only the base `php.ini` is copied, and
   only in native mode).
 - **Sidecar mode (7.4/8.0) bind-mounts the code**, so it can be slower on macOS/Windows
   than native PHP — expected for legacy versions.
-- **WebAdmin changes are not persisted** across `ddev restart` (config is baked into the
-  image). Edit the files in `.ddev/web-build/openlitespeed/` instead.
 
 ## Uninstall
 
