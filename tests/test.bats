@@ -91,22 +91,29 @@ parity_checks() {
   assert_output --partial "max_input_vars=4321"
 
   # ddev xdebug / ddev xhprof toggle lsphp, and lsphp survives the daemon restart.
-  run ddev xdebug on
-  assert_success
-  run parity
-  assert_output --partial "xdebug=on"
-  run ddev xdebug off
+  # Skipped for an extension the image doesn't ship for this PHP version yet
+  # (e.g. xdebug for PHP 8.6), where DDEV itself refuses the toggle.
+  local ext
+  for ext in xdebug xhprof; do
+    if ! ddev exec "test -f /etc/php/\${DDEV_PHP_VERSION}/mods-available/${ext}.ini"; then
+      echo "# ${ext} not available for this PHP version, skipping its toggle" >&3
+      continue
+    fi
+    run ddev "${ext}" on
+    assert_success
+    run parity
+    assert_output --partial "${ext}=on"
+    run ddev "${ext}" off
+    assert_success
+    run parity
+    assert_output --partial "${ext}=off"
+  done
+  # Restart the daemons the way those toggles do, so the checks below always run
+  # after at least one restart.
+  run ddev exec "supervisorctl restart 'webextradaemons:*'"
   assert_success
   run parity
   assert_output --partial "xdebug=off"
-  run ddev xhprof on
-  assert_success
-  run parity
-  assert_output --partial "xhprof=on"
-  run ddev xhprof off
-  assert_success
-  run parity
-  assert_output --partial "xhprof=off"
   run ddev exec "supervisorctl status webextradaemons:lsphp"
   assert_output --partial "RUNNING"
   # The daemon restarts must not leave an old OLS wrapper or server behind.
