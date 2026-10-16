@@ -91,15 +91,15 @@ parity_checks() {
   assert_output --partial "max_input_vars=4321"
 
   # ddev xdebug / ddev xhprof toggle lsphp, and lsphp survives the daemon restart.
-  # Skipped for an extension the image doesn't ship for this PHP version yet
-  # (e.g. xdebug for PHP 8.6), where DDEV itself refuses the toggle.
+  # Skipped when DDEV itself refuses the toggle because the extension doesn't load
+  # for this PHP version yet (e.g. xdebug for PHP 8.6 on DDEV HEAD).
   local ext
   for ext in xdebug xhprof; do
-    if ! ddev exec "test -f /etc/php/\${DDEV_PHP_VERSION}/mods-available/${ext}.ini"; then
-      echo "# ${ext} not available for this PHP version, skipping its toggle" >&3
+    run ddev "${ext}" on
+    if [ "${status}" -ne 0 ] && [[ "${output}" == *"is unavailable for PHP"* ]]; then
+      echo "# ${ext} unavailable for this PHP version, skipping its toggle" >&3
       continue
     fi
-    run ddev "${ext}" on
     assert_success
     run parity
     assert_output --partial "${ext}=on"
