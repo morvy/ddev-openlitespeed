@@ -1,12 +1,21 @@
 #!/bin/bash
 #ddev-generated
-# In-web lsphp daemon (native mode: PHP 8.1-8.5). In sidecar mode (PHP 7.4/8.0)
-# lsphp runs in a separate container, so idle here to keep supervisord happy.
-# Mode is decided at build time (see Dockerfile.openlitespeed); don't test for
-# fcgi-bin/lsphp — the openlitespeed package ships a bundled lsphp 5.6 there.
-MODE="$(cat /usr/local/lsws/DDEV_LSPHP_MODE 2>/dev/null || echo native)"
-if [ "${MODE}" = "native" ] && [ -x /usr/local/lsws/fcgi-bin/lsphp ]; then
-  exec env PHP_LSAPI_CHILDREN="${OLS_LSAPI_CHILDREN:-10}" /usr/local/lsws/fcgi-bin/lsphp -b 127.0.0.1:9000
-else
-  exec tail -f /dev/null
-fi
+# lsphp daemon (LiteSpeed SAPI of DDEV's PHP) for OLS to connect to on 127.0.0.1:9000.
+#
+# DDEV runs web_extra_daemons as `bash -c '<cmd>; exit_code=$?; ...'`, so a
+# `supervisorctl restart` (which `ddev xdebug`/`ddev xhprof` do for generic web
+# servers) signals that bash, not us. An lsphp started with `exec` would be left
+# running, keep the port and serve the old ini while the new one fails to bind.
+# So: clear any previous lsphp first, and forward TERM/INT to our own lsphp.
+
+pkill -TERM -x lsphp 2>/dev/null
+for _ in $(seq 1 50); do
+  pgrep -x lsphp >/dev/null || break
+  sleep 0.1
+done
+pkill -KILL -x lsphp 2>/dev/null
+
+PHP_LSAPI_CHILDREN="${OLS_LSAPI_CHILDREN:-10}" /usr/local/lsws/fcgi-bin/lsphp -b 127.0.0.1:9000 &
+LSPHP_PID=$!
+trap 'kill -TERM "${LSPHP_PID}" 2>/dev/null; wait "${LSPHP_PID}"; exit 0' TERM INT
+wait "${LSPHP_PID}"
