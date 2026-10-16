@@ -1,60 +1,37 @@
 #ddev-generated
-# Install OpenLiteSpeed into the DDEV web container. lsphp is installed here too
-# for versions Debian trixie still ships (8.1-8.5, "native" mode). For versions
-# it dropped (7.4/8.0) lsphp runs in a bookworm sidecar instead, so we skip the
-# local install and OLS connects to the sidecar (see sync-lsphp-mode.sh).
-#
-# The chosen mode is recorded in /usr/local/lsws/DDEV_LSPHP_MODE and read at
-# start time. (Don't infer mode from fcgi-bin/lsphp: the openlitespeed package
-# ships a bundled lsphp 5.6 there, which must not be used.)
+# Install OpenLiteSpeed into the DDEV web container and run PHP through the
+# LiteSpeed SAPI of DDEV's own PHP build (sury's php<ver>-litespeed), not
+# LiteSpeed's separate lsphp packages. Same PHP build as DDEV's php-fpm, so the
+# extension set, php.ini and conf.d are shared with it (see docs/php-parity.md):
+# - every extension DDEV ships, for every PHP version DDEV supports (5.6-8.5, 8.6 on newer DDEV)
+# - DDEV's start-time php.ini edits (timezone) and .ddev/php/*.ini overrides
+# - `ddev xdebug` / `ddev xhprof` (phpenmod/phpdismod act on the shared conf.d)
 
 RUN <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-LSPHPVER="${DDEV_PHP_VERSION//./}"   # 8.4 -> 84
+V="${DDEV_PHP_VERSION}"
 SERVER_ROOT=/usr/local/lsws
 
-# LiteSpeed apt repo + OpenLiteSpeed (always needed).
+# LiteSpeed apt repo, for OpenLiteSpeed itself.
 wget -qO- https://repo.litespeed.sh | bash >/dev/null 2>&1
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openlitespeed
+# apt may also move the image's php${V}-* packages to the repo's current version
+# (all together, so cli/fpm/litespeed stay consistent).
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  openlitespeed "php${V}-litespeed"
 
-if apt-cache show "lsphp${LSPHPVER}" >/dev/null 2>&1; then
-  # Native mode: lsphp is available for this Debian release.
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    "lsphp${LSPHPVER}" \
-    "lsphp${LSPHPVER}-common" \
-    "lsphp${LSPHPVER}-mysql" \
-    "lsphp${LSPHPVER}-curl" \
-    "lsphp${LSPHPVER}-intl" \
-    "lsphp${LSPHPVER}-opcache"
-  for ext in imagick redis igbinary memcached; do
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "lsphp${LSPHPVER}-${ext}"; then
-      echo "NOTE: lsphp${LSPHPVER}-${ext} not available for PHP ${DDEV_PHP_VERSION}, skipping."
-    fi
-  done
+# Share DDEV's fpm php.ini and conf.d. DDEV's start.sh rewrites php.ini in place
+# (`perl -pi`), which turns the php.ini link into a regular file holding the same
+# edits; the conf.d link stays, and is where start.sh copies .ddev/php/*.ini.
+rm -rf "/etc/php/${V}/litespeed/conf.d" "/etc/php/${V}/litespeed/php.ini"
+ln -s ../fpm/conf.d  "/etc/php/${V}/litespeed/conf.d"
+ln -s ../fpm/php.ini "/etc/php/${V}/litespeed/php.ini"
 
-  # Point the stable path at OUR lsphp (overwriting the bundled 5.6 lsphp).
-  mkdir -p "${SERVER_ROOT}/fcgi-bin"
-  ln -sf "${SERVER_ROOT}/lsphp${LSPHPVER}/bin/lsphp" "${SERVER_ROOT}/fcgi-bin/lsphp"
-
-  # Carry DDEV's base php.ini (memory_limit, upload sizes, etc.) into lsphp.
-  # ponytail: does not merge the project's .ddev/php/*.ini overrides — v1.
-  LSPHP_INI_DIR="${SERVER_ROOT}/lsphp${LSPHPVER}/etc/php/${DDEV_PHP_VERSION}/litespeed"
-  if [ -f "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" ]; then
-    mkdir -p "${LSPHP_INI_DIR}"
-    cp "/etc/php/${DDEV_PHP_VERSION}/fpm/php.ini" "${LSPHP_INI_DIR}/php.ini"
-  fi
-
-  echo native > "${SERVER_ROOT}/DDEV_LSPHP_MODE"
-else
-  # Sidecar mode: OLS connects to the bookworm lsphp sidecar. Remove the bundled
-  # lsphp 5.6 so nothing here can be used by mistake.
-  echo "NOTE: no lsphp for PHP ${DDEV_PHP_VERSION} in the web image; using the lsphp sidecar."
-  rm -f "${SERVER_ROOT}/fcgi-bin/lsphp"
-  echo sidecar > "${SERVER_ROOT}/DDEV_LSPHP_MODE"
-fi
+# OLS's stable lsphp path -> our SAPI (overwrites the bundled lsphp 5.6).
+mkdir -p "${SERVER_ROOT}/fcgi-bin"
+ln -sf "/usr/bin/lsphp${V}" "${SERVER_ROOT}/fcgi-bin/lsphp"
 
 mkdir -p "${SERVER_ROOT}/conf/vhosts/ddev" "${SERVER_ROOT}/logs" "${SERVER_ROOT}/tmp" "${SERVER_ROOT}/cachedata"
 EOF

@@ -1,17 +1,10 @@
 #ddev-generated
 # Turn the web container into an OpenLiteSpeed server.
-# DDEV stops managing nginx/apache-fpm. lsphp (LiteSpeed SAPI PHP) runs either
-# in the web container (native, PHP 8.1-8.5) or in a bookworm sidecar (PHP
-# 7.4/8.0); the pre-start hook picks the mode and generates the sidecar
-# docker-compose file when needed. OLS connects to whichever lsphp is active.
+# DDEV stops managing nginx/apache-fpm. lsphp (the LiteSpeed SAPI of DDEV's own
+# PHP build) runs as a daemon in the web container; OLS connects to it.
 webserver_type: generic
 
-hooks:
-  pre-start:
-    - exec-host: "bash ${DDEV_APPROOT}/.ddev/openlitespeed/sync-lsphp-mode.sh"
-
 web_extra_daemons:
-  # lsphp for native (trixie) PHP versions. Idles when a sidecar is in use.
   - name: "lsphp"
     command: "/usr/local/bin/ddev-openlitespeed-lsphp"
     directory: /var/www/html

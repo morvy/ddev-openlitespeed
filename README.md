@@ -1,25 +1,34 @@
+[![add-on registry](https://img.shields.io/badge/DDEV-Add--on_Registry-blue)](https://addons.ddev.com)
+[![tests](https://github.com/morvy/ddev-openlitespeed/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/morvy/ddev-openlitespeed/actions/workflows/tests.yml?query=branch%3Amaster)
+[![last commit](https://img.shields.io/github/last-commit/morvy/ddev-openlitespeed)](https://github.com/morvy/ddev-openlitespeed/commits)
+[![release](https://img.shields.io/github/v/release/morvy/ddev-openlitespeed)](https://github.com/morvy/ddev-openlitespeed/releases/latest)
+
 # ddev-openlitespeed
 
 Replaces DDEV's default web server (nginx/apache-fpm) with **OpenLiteSpeed** running
 **lsphp** (the LiteSpeed SAPI PHP), so you can develop and test against a real
 OpenLiteSpeed stack locally.
 
-Built on DDEV's `webserver_type: generic` mechanism (DDEV v1.24.3+), the same one
+Built on DDEV's `webserver_type: generic` mechanism (the add-on needs DDEV v1.24.10+), the same one
 the official [`ddev-frankenphp`](https://github.com/ddev/ddev-frankenphp) add-on uses.
 
 ## What you get
 
 - OpenLiteSpeed serving your project over the normal `https://<project>.ddev.site` URL.
-- **lsphp** as the PHP runtime (real LiteSpeed SAPI, not php-fpm behind a proxy).
+- **lsphp** as the PHP runtime (real LiteSpeed SAPI, not php-fpm behind a proxy) — the
+  LiteSpeed SAPI of **DDEV's own PHP build**, so it has the same extensions, `php.ini`,
+  `.ddev/php/*.ini` overrides, timezone, `ddev xdebug` and `ddev xhprof` as nginx-fpm /
+  apache-fpm (see [docs/php-parity.md](docs/php-parity.md)).
 - **Correct HTTPS for PHP** behind the DDEV router: `$_SERVER['HTTPS']`, `SERVER_PORT`
   and `REQUEST_SCHEME` reflect the real scheme, so `is_ssl()` / `isSecure()`, redirects
   and absolute-URL generation work (no mixed-content or redirect loops).
 - **LSCache** advertised to the [LiteSpeed Cache](https://wordpress.org/plugins/litespeed-cache/)
   plugin (`X-LSCACHE`), so the plugin detects the server and can drive page caching.
-- PHP version follows DDEV (`ddev config --php-version=… && ddev restart`) with
-  automatic switching between native and sidecar lsphp — see below.
+- PHP version follows DDEV (`ddev config --php-version=… && ddev restart`).
 - Project `.htaccess` is honoured for front-controller rewrites (WordPress, Drupal,
   Laravel, …), like apache-fpm.
+- DDEV's own 404 and 403 (directory without an index file) pages, like nginx-fpm /
+  apache-fpm (DDEV v1.25.4+); your app's own error responses pass through.
 - OLS logs stream to `ddev logs -f`.
 
 ## Install
@@ -31,11 +40,15 @@ ddev restart
 
 ## PHP versions
 
-Available: **7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5**. Set one with
+Every PHP version DDEV supports (5.6–8.5). Set one with
 `ddev config --php-version=<version> && ddev restart`.
 
-8.1–8.5 run lsphp natively in the web container; 7.4 and 8.0 run it in a
-Debian-bookworm sidecar container. PHP 5.6 and 7.0–7.3 are not available.
+lsphp is `php<version>-litespeed` from the same repository as DDEV's `php<version>-fpm`,
+installed in the web container. Installing it may move the image's `php<version>-*`
+packages to that repository's current patch release (all together).
+
+PHP 8.6 needs a DDEV release newer than v1.25.4 (DDEV refuses to start it before
+that); the add-on needs no change for it.
 
 ## How it works
 
@@ -44,23 +57,20 @@ code-owning) user:
 
 | Piece | Role |
 |-------|------|
-| `config.openlitespeed.yaml` | sets `webserver_type: generic`; a `pre-start` hook chooses native/sidecar; runs the **lsphp** and **openlitespeed** daemons; exposes 80/443 through `ddev-router` |
-| `openlitespeed/sync-lsphp-mode.sh` | pre-start host hook: picks native vs sidecar for the current PHP version and generates the sidecar `docker-compose` file when needed |
-| `openlitespeed/lsphp-sidecar/Dockerfile` | the bookworm lsphp sidecar image (7.4/8.0), built automatically on `ddev start` |
-| `web-build/Dockerfile.openlitespeed` | installs OpenLiteSpeed; installs `lsphp${DDEV_PHP_VERSION//./}` natively when trixie has it, else records "sidecar" mode |
+| `config.openlitespeed.yaml` | sets `webserver_type: generic`; runs the **lsphp** and **openlitespeed** daemons; exposes 80/443 through `ddev-router` |
+| `web-build/Dockerfile.openlitespeed` | installs OpenLiteSpeed and `php${DDEV_PHP_VERSION}-litespeed`; links the SAPI's `php.ini` and `conf.d` to DDEV's fpm ones |
+| `web-build/openlitespeed/ddev-openlitespeed-lsphp` | lsphp daemon on `127.0.0.1:9000`; restart-safe (DDEV runs daemons under `bash -c`, so it clears a leftover lsphp before binding) |
 | `web-build/openlitespeed/httpd_config.conf` | main OLS config: one vhost, lsphp external app (`autoStart 0`), LSCache module, `:80` (router) + `:443` (DDEV master cert) listeners |
-| `web-build/openlitespeed/vhost.conf` | vhost template; docroot injected at start; rewrites `X-Forwarded-Proto` into real HTTPS server vars |
-| `web-build/openlitespeed/ddev-openlitespeed-start` | foreground OLS wrapper: renders the vhost, points OLS at the active lsphp, streams logs |
+| `web-build/openlitespeed/vhost.conf` | vhost template; docroot injected at start; rewrites `X-Forwarded-Proto` into real HTTPS server vars; serves DDEV's 404/403 pages |
+| `web-build/openlitespeed/ddev-openlitespeed-start` | foreground OLS wrapper: renders the vhost, pins the run user, streams logs; restart-safe (clears a leftover OLS and wrapper first) |
 
 Request flow: `ddev-router` terminates public TLS and forwards **plain HTTP to OLS on
 :80** (with `X-Forwarded-Proto`); OLS restores the HTTPS server vars and proxies PHP
-over LSAPI to the active lsphp (local `127.0.0.1:9000`, or `openlitespeed-lsphp:9000`
-in the sidecar).
+over LSAPI to lsphp on `127.0.0.1:9000`.
 
 > **Why lsphp is a separate process:** this OLS build has no working suEXEC/cgid helper,
 > so OLS cannot fork lsphp itself (`cgidSuEXEC failed`). lsphp runs as its own daemon and
-> the external app uses `autoStart 0` (connect-only). That also makes the bookworm sidecar
-> for EOL PHP straightforward — OLS just connects to it over TCP.
+> the external app uses `autoStart 0` (connect-only).
 
 ## Known limitations
 
@@ -68,11 +78,6 @@ in the sidecar).
   worker that needs the same (broken) suEXEC helper, so it can't run in this container.
   It's disabled; configure OpenLiteSpeed by editing the files under
   `.ddev/web-build/openlitespeed/` and running `ddev restart`.
-- **`ddev xdebug on` does not drive lsphp yet** (lsphp uses its own ini directory).
-- **`.ddev/php/*.ini` overrides don't reach lsphp** (only the base `php.ini` is copied, and
-  only in native mode).
-- **Sidecar mode (7.4/8.0) bind-mounts the code**, so it can be slower on macOS/Windows
-  than native PHP — expected for legacy versions.
 
 ## Uninstall
 
@@ -81,8 +86,8 @@ ddev add-on remove openlitespeed
 ddev restart
 ```
 
-Removes the `#ddev-generated` files (and the generated sidecar compose) and reverts
-`webserver_type` to your project's previous value.
+Removes the `#ddev-generated` files and reverts `webserver_type` to your project's
+previous value. Upgrading from v1.0.x removes its lsphp sidecar files.
 
 ## Releasing
 
@@ -90,10 +95,10 @@ Push a version tag; the `release` workflow runs the full PHP matrix against it a
 publishes a GitHub release only if every job passes:
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).

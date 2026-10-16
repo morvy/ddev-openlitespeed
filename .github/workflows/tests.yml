@@ -11,7 +11,7 @@ on:
     inputs:
       debug_enabled:
         type: boolean
-        description: 'Run with tmate debugging enabled'
+        description: Enable remote debugging session
         required: false
         default: false
   # Allow other workflows (e.g. release) to run this suite as a gate.
@@ -26,13 +26,20 @@ permissions:
 
 jobs:
   tests:
-    name: "${{ matrix.bats_tag }} (ddev ${{ matrix.ddev_version }})"
-    runs-on: ubuntu-latest
+    name: "${{ matrix.bats_tag }} (ddev ${{ matrix.ddev_version }}, ${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    # DDEV HEAD is an early warning only, so it never blocks a release (release.yml).
+    continue-on-error: ${{ matrix.ddev_version == 'HEAD' }}
     strategy:
       fail-fast: false
       matrix:
-        ddev_version: [stable]
-        bats_tag: [php74, php83, php84]
+        os: [ubuntu-latest, ubuntu-26.04-arm]
+        ddev_version: [stable, HEAD]
+        bats_tag: [php56, php74, php83, php84, php85, php86]
+        exclude:
+          # PHP 8.6 needs a DDEV release newer than v1.25.4.
+          - ddev_version: stable
+            bats_tag: php86
     steps:
       - name: ${{ matrix.bats_tag }}
         uses: ddev/github-action-add-on-test@v2

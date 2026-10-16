@@ -4,24 +4,14 @@
 #
 # OLS daemonizes itself, but supervisord expects a foreground process. So we:
 #   1. render the vhost config with the project's real docroot
-#   2. point OLS at the active lsphp (local in this container, or the sidecar)
-#   3. pin OLS's server user/group to the container's runtime (code-owning) user
-#   4. start OLS (which detaches) and stream its logs so `ddev logs -f` shows them
-#   5. block until OLS exits, then return so supervisord restarts us
+#   2. pin OLS's server user/group to the container's runtime (code-owning) user
+#   3. start OLS (which detaches) and stream its logs so `ddev logs -f` shows them
+#   4. block until OLS exits, then return so supervisord restarts us
 set -u
 
 SERVER_ROOT=/usr/local/lsws
 RUN_USER="$(id -un)"
 RUN_GROUP="$(id -gn)"
-
-# lsphp location, from the mode chosen at build time. native (PHP 8.1-8.5) =>
-# lsphp in this container; sidecar (PHP 7.4/8.0) => the bookworm sidecar.
-MODE="$(cat "${SERVER_ROOT}/DDEV_LSPHP_MODE" 2>/dev/null || echo native)"
-if [ "${MODE}" = "sidecar" ]; then
-  LSPHP_ADDRESS="openlitespeed-lsphp:9000"
-else
-  LSPHP_ADDRESS="127.0.0.1:9000"
-fi
 
 # Resolve the docroot: DDEV mounts the project at /var/www/html; DDEV_DOCROOT is
 # the (possibly empty) subdirectory configured with `ddev config --docroot`.
@@ -33,9 +23,8 @@ sed "s|##DDEV_DOCROOT##|${DOCROOT}|g" \
   "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf.tmpl" \
   > "${SERVER_ROOT}/conf/vhosts/ddev/vhconf.conf"
 
-# Set the lsphp address and pin OLS to the current (code-owning) user.
+# Pin OLS to the current (code-owning) user.
 sed -i \
-  -e "s|##LSPHP_ADDRESS##|${LSPHP_ADDRESS}|g" \
   -e "s|^user .*|user                      ${RUN_USER}|" \
   -e "s|^group .*|group                     ${RUN_GROUP}|" \
   "${SERVER_ROOT}/conf/httpd_config.conf"
@@ -44,18 +33,63 @@ mkdir -p /tmp/lshttpd "${SERVER_ROOT}/logs"
 : > "${SERVER_ROOT}/logs/error.log"  2>/dev/null || true
 : > "${SERVER_ROOT}/logs/access.log" 2>/dev/null || true
 
+OLS_PID=""
+TAIL_PID=""
+
+# On TERM/INT stop only the OLS this wrapper started (a newer wrapper may already
+# be running its own), then the log tail.
+graceful_stop() {
+  if [ -n "${OLS_PID}" ]; then
+    kill -TERM "${OLS_PID}" 2>/dev/null
+    for _ in $(seq 1 50); do
+      kill -0 "${OLS_PID}" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "${OLS_PID}" 2>/dev/null
+  fi
+  [ -n "${TAIL_PID}" ] && kill "${TAIL_PID}" 2>/dev/null
+  exit 0
+}
+trap graceful_stop TERM INT
+
+# Wait up to $1 tenths of a second for every OLS process to exit.
+wait_ols_gone() {
+  for _ in $(seq 1 "$1"); do
+    pgrep -x litespeed >/dev/null || return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# DDEV runs daemons as `bash -c '<cmd>; ...'` with stopasgroup, so `supervisorctl
+# restart` (which `ddev xdebug`/`ddev xhprof` do) TERMs the old wrapper too, and its
+# trap would still be stopping OLS while this instance starts one. KILL old wrappers
+# (anchored: a `ddev exec less <this file>` must not match) and their log tails,
+# then stop every OLS and wait until it is gone, so :80 is free.
+# Not `lswsctrl stop`: it sends USR2 (graceful restart) before TERM, and its
+# `{1..15}` wait loop runs once under dash, so it returns with OLS still running.
+for pid in $(pgrep -f '^(/usr)?/bin/bash /usr/local/bin/ddev-openlitespeed-start$'); do
+  [ "${pid}" = "$$" ] || kill -KILL "${pid}" 2>/dev/null
+done
+pkill -f "^tail -n0 -F ${SERVER_ROOT}/logs/" 2>/dev/null
+pkill -TERM -x litespeed 2>/dev/null
+if ! wait_ols_gone 50; then
+  pkill -KILL -x litespeed 2>/dev/null
+  wait_ols_gone 20
+fi
+rm -f /tmp/lshttpd/lshttpd.pid
+
 "${SERVER_ROOT}/bin/lswsctrl" start
+OLS_PID="$(cat /tmp/lshttpd/lshttpd.pid 2>/dev/null)"
+if [ -z "${OLS_PID}" ] || ! kill -0 "${OLS_PID}" 2>/dev/null; then
+  # Non-zero, so DDEV's daemon wrapper pauses before supervisord retries.
+  echo "ddev-openlitespeed: OpenLiteSpeed failed to start" >&2
+  exit 1
+fi
 
 # Stream logs to this process's stdout so they reach `ddev logs`.
 tail -n0 -F "${SERVER_ROOT}/logs/error.log" "${SERVER_ROOT}/logs/access.log" &
 TAIL_PID=$!
-
-graceful_stop() {
-  "${SERVER_ROOT}/bin/lswsctrl" stop >/dev/null 2>&1 || true
-  kill "${TAIL_PID}" 2>/dev/null || true
-  exit 0
-}
-trap graceful_stop TERM INT
 
 # Block until OLS stops running, then let supervisord restart the daemon.
 while "${SERVER_ROOT}/bin/lswsctrl" status 2>/dev/null | grep -q 'is running'; do
